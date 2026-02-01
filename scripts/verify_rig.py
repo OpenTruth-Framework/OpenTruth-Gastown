@@ -1,64 +1,49 @@
 #!/usr/bin/env python3
 """
-OpenTruth Target-Aware Verification CLI
----------------------------------------
-This script is the "Lens" used by specialized Gastown agents (Gaugers & Spotters) 
-to verify external repositories ("Rigs").
+OpenTruth Target-Aware Verification CLI (Delegator Mode)
+--------------------------------------------------------
+This script is the "Protocol Wrapper" for Gastown Agents (Gaugers & Spotters).
 
-Unlike the Agent script (which looks at itself), this script looks at a *Target Path*.
+Instead of hardcoding verification logic (e.g., Godot vs React), this script 
+**delegates** the verification to the target Rig itself.
 
-Roles:
-    - Gauger: Verifies Logic (Unit Tests, Scripts, Code Integrity)
-    - Spotter: Verifies Perception (Visual Assets, Screenshots, Builds)
+The Contract:
+    1. The Rig MUST provide executable scripts in its `.truth/` directory.
+       - `.truth/verify_logic` (for Gaugers)
+       - `.truth/verify_visual` (for Spotters)
+    
+    2. This script executes those hooks, captures the output, and wraps it 
+       into a standardized JSONL Proof in the Town Ledger.
 
 Usage:
     python verify_rig.py --target /path/to/rig --role gauger
     python verify_rig.py --target /path/to/rig --role spotter
 """
 
-import argparse  # Standard library for parsing command-line arguments (flags like --target)
-import json      # Standard library for handling JSON data
-import datetime  # Standard library for timestamps
-import os        # Standard library for file system navigation
-import sys       # Standard library for system exit codes
+import argparse
+import json
+import datetime
+import os
+import sys
+import subprocess
 
 # --- Configuration ---
-# CENTRAL_PROOFS_DIR: The location of the "Truth Ledger" where all proofs are stored.
-# In a Gastown setup, this script lives in `tools/opentruth/scripts/`.
-# We assume the `data/truth_ledger` is located relative to the Town root.
-# This logic navigates: scripts/ -> opentruth/ -> tools/ -> TownRoot/ -> data/truth_ledger/
-# Note: Adjust verify_rig.py relative path logic if directory structure changes.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOWN_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../../../")) 
 CENTRAL_PROOFS_DIR = os.path.join(TOWN_ROOT, "data/truth_ledger")
 
-# Fallback: If we aren't in a standardized town structure, default to a local history/proofs
+# Fallback for non-standard layouts
 if not os.path.exists(CENTRAL_PROOFS_DIR):
     CENTRAL_PROOFS_DIR = os.path.abspath("history/proofs")
 
 def log_proof(target, role, action, status, details):
-    """
-    Writes a 'Proof' to the Central Ledger.
-
-    This function centralizes the history of the entire Town. Whether you are checking
-    Rig A or Rig B, the proof lands here.
-
-    Args:
-        target (str): The path to the Rig being verified.
-        role (str): The agent role performing the check (gauger/spotter).
-        action (str): The specific check performed.
-        status (str): "success" or "failure".
-        details (dict): Technical details of the findings.
-    """
+    """Logs the execution result to the Central Ledger."""
     timestamp = datetime.datetime.now(datetime.UTC).isoformat()
-    
-    # Extract just the folder name of the target (e.g., "aerobeat-feature-dance")
-    # This keeps the log clean and readable.
     target_name = os.path.basename(os.path.abspath(target))
 
     proof = {
         "timestamp": timestamp,
-        "agent": f"OpenTruth-{role.capitalize()}", # e.g., "OpenTruth-Gauger"
+        "agent": f"OpenTruth-{role.capitalize()}",
         "target_rig": target_name,
         "role": role,
         "action": action,
@@ -66,11 +51,7 @@ def log_proof(target, role, action, status, details):
         "details": details
     }
     
-    # Ensure the central ledger directory exists
     os.makedirs(CENTRAL_PROOFS_DIR, exist_ok=True)
-    
-    # We segregate logs by role (gauger_log.jsonl vs spotter_log.jsonl)
-    # This makes it easier for the "Witness" (Auditor) agent to review specific types of proofs.
     proof_file = os.path.join(CENTRAL_PROOFS_DIR, f"{role}_log.jsonl")
     
     with open(proof_file, "a") as f:
@@ -79,114 +60,91 @@ def log_proof(target, role, action, status, details):
     print(f"📝 {role.capitalize()} Proof logged: {action} -> {status}")
     print(f"   📍 Location: {proof_file}")
 
-def run_gauger(target_path):
+def find_executable(truth_dir, base_name):
     """
-    The Gauger Workflow (Logic Verification).
-    
-    This function is responsible for ensuring the 'Left Brain' of the Rig is functional.
-    It checks for:
-    1. A .truth directory (The Spec)
-    2. A tests directory (The Verification Logic)
-    3. (Future) Runs the actual unit tests via Godot CLI
-    
-    Args:
-        target_path (str): The absolute path to the Rig.
-        
-    Returns:
-        bool: True if verification passes.
+    Looks for an executable script with supported extensions.
+    Priority: No extension -> .sh -> .py -> .rb -> .js
     """
-    print(f"🔧 Gauger scanning: {target_path}")
-    
-    truth_dir = os.path.join(target_path, ".truth")
-    tests_dir = os.path.join(target_path, "tests")
-    
-    findings = {
-        "has_truth_dir": os.path.isdir(truth_dir),
-        "has_tests_dir": os.path.isdir(tests_dir),
-        "test_count": 0
-    }
-    
-    # If tests exist, count them to give the human/agent more context
-    if findings["has_tests_dir"]:
-        # We look for .gd (Godot Script) files
-        findings["test_count"] = len([f for f in os.listdir(tests_dir) if f.endswith('.gd')])
-    
-    # Validation Logic:
-    # Strict Mode: Must have .truth AND .tests AND > 0 tests.
-    # Relaxed Mode (Current): Just needs .truth and .tests folder presence.
-    is_valid = findings["has_truth_dir"] and findings["has_tests_dir"]
-    
-    status = "success" if is_valid else "failure"
-    log_proof(target_path, "gauger", "verify_logic", status, findings)
-    return is_valid
+    extensions = ["", ".sh", ".py", ".rb", ".js"]
+    for ext in extensions:
+        script_path = os.path.join(truth_dir, base_name + ext)
+        if os.path.isfile(script_path) and os.access(script_path, os.X_OK):
+            return script_path
+    return None
 
-def run_spotter(target_path):
+def run_delegated_check(target_path, role):
     """
-    The Spotter Workflow (Visual Verification).
-    
-    This function is responsible for ensuring the 'Right Brain' of the Rig is correct.
-    It checks for:
-    1. A .truth directory (The Spec)
-    2. Reference Images (.png/.jpg) inside that directory
-    3. (Future) Compares build screenshots against these references.
+    Finds and runs the specific verification script for the role.
     
     Args:
-        target_path (str): The absolute path to the Rig.
+        target_path (str): Path to the Rig.
+        role (str): 'gauger' or 'spotter'.
         
     Returns:
-        bool: True if verification passes.
+        bool: True if the delegated script exited with code 0.
     """
-    print(f"👀 Spotter scanning: {target_path}")
+    print(f"🔎 {role.capitalize()} checking: {target_path}")
     
     truth_dir = os.path.join(target_path, ".truth")
+    script_name = "verify_logic" if role == "gauger" else "verify_visual"
     
-    findings = {
-        "has_truth_dir": os.path.isdir(truth_dir),
-        "reference_images": []
-    }
+    # 1. Locate the Hook
+    script_path = find_executable(truth_dir, script_name)
     
-    if findings["has_truth_dir"]:
-        # Find all image files that serve as 'Visual Truths'
-        findings["reference_images"] = [f for f in os.listdir(truth_dir) if f.endswith(('.png', '.jpg'))]
+    if not script_path:
+        error_msg = f"❌ No executable '{script_name}' found in {truth_dir}"
+        print(error_msg)
+        log_proof(target_path, role, f"delegate_{role}", "failure", {"error": "missing_hook", "msg": error_msg})
+        return False
+        
+    print(f"🚀 Executing: {script_path}")
     
-    # Validation Logic:
-    # Must have .truth folder AND at least one reference image to verify against.
-    is_valid = findings["has_truth_dir"] and len(findings["reference_images"]) > 0
-    
-    status = "success" if is_valid else "failure"
-    log_proof(target_path, "spotter", "verify_visual", status, findings)
-    return is_valid
+    # 2. Execute the Hook
+    try:
+        # Run the script and capture output
+        result = subprocess.run(
+            [script_path], 
+            cwd=target_path, # Run context is the Rig root
+            capture_output=True,
+            text=True
+        )
+        
+        details = {
+            "hook": os.path.basename(script_path),
+            "exit_code": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip()
+        }
+        
+        status = "success" if result.returncode == 0 else "failure"
+        log_proof(target_path, role, f"delegate_{role}", status, details)
+        
+        # Echo output to console for the agent/user
+        if result.stdout: print(f"--- Output ---\n{result.stdout}")
+        if result.stderr: print(f"--- Errors ---\n{result.stderr}")
+        
+        return result.returncode == 0
+
+    except Exception as e:
+        print(f"❌ Execution Error: {e}")
+        log_proof(target_path, role, f"delegate_{role}", "error", {"error": str(e)})
+        return False
 
 def main():
-    """
-    CLI Entry Point.
-    Parses arguments -> Dispatches to correct Role Function -> Exits with Status Code.
-    """
-    parser = argparse.ArgumentParser(description='OpenTruth Verification CLI')
-    
-    # --target: Mandatory. Which folder are we checking?
+    parser = argparse.ArgumentParser(description='OpenTruth Verification CLI (Delegator)')
     parser.add_argument('--target', required=True, help='Path to the Rig/Repo to verify')
-    
-    # --role: Mandatory. Who is checking it? (Gauger/Logic vs Spotter/Visual)
-    parser.add_argument('--role', choices=['gauger', 'spotter'], required=True, help='Agent Role (Gauger=Logic, Spotter=Visual)')
+    parser.add_argument('--role', choices=['gauger', 'spotter'], required=True, help='Agent Role')
     
     args = parser.parse_args()
     
-    # Validate Target Existence
     if not os.path.exists(args.target):
         print(f"❌ Target path not found: {args.target}")
         sys.exit(1)
 
-    # Dispatch based on Role
-    success = False
-    if args.role == 'gauger':
-        success = run_gauger(args.target)
-    elif args.role == 'spotter':
-        success = run_spotter(args.target)
+    success = run_delegated_check(args.target, args.role)
         
-    # Exit Handling
     if not success:
-        print(f"❌ {args.role.capitalize()} verification failed for {args.target}")
+        print(f"❌ {args.role.capitalize()} verification failed.")
         sys.exit(1)
         
     print(f"✅ {args.role.capitalize()} verification passed!")

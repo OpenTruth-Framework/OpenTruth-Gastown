@@ -17,6 +17,8 @@ Town-Root/
 │   └── truth_ledger/        # <--- Centralized Proofs (JSONL)
 ├── Rig-A/
 │   ├── .truth/              # <--- Local Specs (Logic/Assets)
+│   │   ├── verify_logic.sh  # <--- Implementation (e.g., Godot CLI)
+│   │   └── verify_visual.py # <--- Implementation (e.g., Screenshot Compare)
 │   └── src/
 └── Rig-B/
     ├── .truth/
@@ -27,33 +29,30 @@ Town-Root/
 
 ## 🛠 Usage
 
-### 1. Installation
+OpenTruth follows an **Inversion of Control** model. The Framework provides the *Protocol*, but the Rig provides the *Implementation*.
 
-Clone this repository into your Town's `tools/` directory:
+### 1. Verification Hooks (The Contract)
+Each Rig must provide executable scripts in its `.truth/` directory:
 
-```bash
-mkdir -p tools
-git clone https://github.com/OpenTruth-Framework/OpenTruth-Gastown tools/opentruth
-```
+*   **Logic Verification (Gauger):** `.truth/verify_logic` (or `.sh`, `.py`)
+    *   *Example:* Runs `godot --run-tests` or `npm test`.
+*   **Visual Verification (Spotter):** `.truth/verify_visual`
+    *   *Example:* Runs a screenshot comparison script.
 
-### 2. Orchestration
-Add the specialized roles to your `Formula.toml` (see `gastown-orchestration/` for templates).
-
-### 3. Verification
-Agents running as **Gaugers** (Logic) or **Spotters** (Visual) will use the CLI to verify Rigs:
+### 2. Execution
+Agents run the standard CLI, which finds and executes the Rig's specific hook:
 
 ```bash
-# Gauger: Checks unit tests & logic
+# Gauger finds and runs .truth/verify_logic
 python tools/opentruth/scripts/verify_rig.py --target ./Rig-A --role gauger
-
-# Spotter: Checks visual assets (.png)
-python tools/opentruth/scripts/verify_rig.py --target ./Rig-A --role spotter
 ```
+
+The CLI captures the hook's `Exit Code`, `Stdout`, and `Stderr` and logs it to the central ledger.
 
 ---
 
 ## 📂 Contents
 
-*   **`scripts/verify_rig.py`**: The "Target-Aware" verification CLI.
+*   **`scripts/verify_rig.py`**: The "Target-Aware" verification CLI (Delegator).
 *   **`gastown-orchestration/`**: Templates for `Formula.toml` and Agent Prompts.
 *   **`bin/`**: Additional utility scripts.
