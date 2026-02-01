@@ -28,7 +28,9 @@ Town-Root/
 ## 🛠 Usage
 
 ### 1. Installation
+
 Clone this repository into your Town's `tools/` directory:
+
 ```bash
 mkdir -p tools
 git clone https://github.com/OpenTruth-Framework/OpenTruth-Gastown tools/opentruth
