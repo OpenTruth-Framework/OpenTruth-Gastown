@@ -1,38 +1,48 @@
 [town]
-name = "OpenTruth-Intelligence-Bureau"
-description = "A Gastown town dedicated to verifying data provenance and integrity."
+name = "OpenTruth-Verification-Swarm"
+description = "A Gastown town dedicated to verifying Rig integrity via OpenTruth (Logic & Vision)."
 
 [infrastructure]
 # Point this to where you've cloned the OpenTruth repo
 tool_path = "./tools/opentruth"
-data_plane = "./beads/truth_ledger"
+data_plane = "./data/truth_ledger"
+
+# --- Specialized Agents ---
 
 [[agents]]
-name = "Truth-Scout"
-role = "Polecat"
-description = "Scours external sources (web/social) for specific claims and runs initial OpenTruth modules."
-persona = "./orchestration/agent-prompts.md#intelligence-agents"
-capabilities = ["web_search", "metadata_extraction"]
+name = "Rig-Gauger"
+role = "Gauger"
+description = "Verifies the LOGIC of a Rig (Unit Tests, Scripts)."
+persona = "./gastown-orchestration/agent-prompts.md#gauger"
+capabilities = ["run_tests", "read_code"]
 
 [[agents]]
-name = "The-Auditor"
-role = "Witness"
-description = "Monitors the Truth-Scout. If a claim score is < 0.8, it flags the bead for human or Refinery review."
-persona = "You are a critical auditor. You use OpenTruth's cross-reference module to find contradictions in Polecat reports."
+name = "Rig-Spotter"
+role = "Spotter"
+description = "Verifies the VISUAL state of a Rig (Screenshots, Assets)."
+persona = "./gastown-orchestration/agent-prompts.md#spotter"
+capabilities = ["computer_vision", "compare_images"]
 
 [[agents]]
-name = "Refinery-01"
-role = "Refinery"
-description = "Automated cleanup. If the Witness flags a hallucination, this agent attempts to find a secondary source via OpenTruth."
+name = "Town-Watchdog"
+role = "Watchdog"
+description = "Audits the security and integrity of the Town."
+persona = "./gastown-orchestration/agent-prompts.md#watchdog"
+
+# --- Convoys (Workflows) ---
 
 [[convoys]]
-name = "Deep-Verification-Run"
-description = "A coordinated sweep involving a Scout and an Auditor to verify a batch of incoming data."
-agents = ["Truth-Scout", "The-Auditor"]
+name = "Full-Rig-Verification"
+description = "A complete sweep of a Rig's Logic and Visuals."
+agents = ["Rig-Gauger", "Rig-Spotter"]
+
+# --- Hooks (The OpenTruth Integration) ---
 
 [hooks]
-# Every time a 'Truth-Scout' generates a bead, run the conversion script
-on_bead_created = "python3 ./orchestration/scripts/ot_to_bead.py"
+# Triggered when a Gauger or Spotter commits a finding
+# Wraps the raw finding into a Bead for the data plane
+on_proof_generated = "python3 ./tools/opentruth/scripts/ot_to_bead.py"
 
-# Pre-merge hook for the Refinery
-pre_refine = "python3 ./tools/opentruth/scripts/validate_provenance.py"
+# Pre-commit hook: Run the verifier to ensure no regressions
+# This blocks the commit if the Rig is in a broken state
+pre_commit_check = "python3 ./tools/opentruth/scripts/verify_rig.py --target ${TARGET_RIG} --role gauger"
