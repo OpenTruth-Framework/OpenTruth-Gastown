@@ -1,0 +1,38 @@
+[town]
+name = "OpenTruth-Intelligence-Bureau"
+description = "A Gastown town dedicated to verifying data provenance and integrity."
+
+[infrastructure]
+# Point this to where you've cloned the OpenTruth repo
+tool_path = "./tools/opentruth"
+data_plane = "./beads/truth_ledger"
+
+[[agents]]
+name = "Truth-Scout"
+role = "Polecat"
+description = "Scours external sources (web/social) for specific claims and runs initial OpenTruth modules."
+persona = "./orchestration/agent-prompts.md#intelligence-agents"
+capabilities = ["web_search", "metadata_extraction"]
+
+[[agents]]
+name = "The-Auditor"
+role = "Witness"
+description = "Monitors the Truth-Scout. If a claim score is < 0.8, it flags the bead for human or Refinery review."
+persona = "You are a critical auditor. You use OpenTruth's cross-reference module to find contradictions in Polecat reports."
+
+[[agents]]
+name = "Refinery-01"
+role = "Refinery"
+description = "Automated cleanup. If the Witness flags a hallucination, this agent attempts to find a secondary source via OpenTruth."
+
+[[convoys]]
+name = "Deep-Verification-Run"
+description = "A coordinated sweep involving a Scout and an Auditor to verify a batch of incoming data."
+agents = ["Truth-Scout", "The-Auditor"]
+
+[hooks]
+# Every time a 'Truth-Scout' generates a bead, run the conversion script
+on_bead_created = "python3 ./orchestration/scripts/ot_to_bead.py"
+
+# Pre-merge hook for the Refinery
+pre_refine = "python3 ./tools/opentruth/scripts/validate_provenance.py"
